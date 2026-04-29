@@ -71,6 +71,33 @@ class TestExtractCriticalFlags:
         assert relaunch_mod._extract_critical_flags(argv) == ["-s", "foo", "-s", "bar", "--tui"]
 
 
+class TestCriticalFlagTable:
+    """Sanity-check the argparse-introspected table that drives extraction."""
+
+    def test_short_and_long_aliases_are_paired(self):
+        table = dict(relaunch_mod._CRITICAL_FLAGS_TABLE)
+        # Each pair declared together in the parser should share takes_value.
+        for short, long_ in [
+            ("-p", "--profile"),
+            ("-m", "--model"),
+            ("-w", "--worktree"),
+            ("-s", "--skills"),
+            ("-Q", "--quiet"),
+            ("-v", "--verbose"),
+        ]:
+            assert table[short] == table[long_], f"{short}/{long_} disagree"
+
+    def test_store_true_flags_do_not_take_value(self):
+        table = dict(relaunch_mod._CRITICAL_FLAGS_TABLE)
+        for flag in ["--tui", "--dev", "--yolo", "-w", "-Q", "-v"]:
+            assert table[flag] is False, f"{flag} should not take a value"
+
+    def test_value_flags_take_value(self):
+        table = dict(relaunch_mod._CRITICAL_FLAGS_TABLE)
+        for flag in ["--profile", "--model", "--provider", "--source", "--skills"]:
+            assert table[flag] is True, f"{flag} should take a value"
+
+
 class TestBuildRelaunchArgv:
     def test_uses_bin_when_available(self, monkeypatch):
         monkeypatch.setattr(relaunch_mod, "resolve_hermes_bin", lambda: "/usr/bin/hermes")

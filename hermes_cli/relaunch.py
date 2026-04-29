@@ -8,37 +8,70 @@ doesn't silently drop the user's UI mode or other preferences.
 Also works when ``hermes`` is not on PATH (e.g. ``nix run`` or ``python -m``).
 """
 
+import argparse
 import os
 import shutil
 import sys
 from typing import Optional, Sequence
 
+from hermes_cli._parser import build_top_level_parser
 
-# (option_string, takes_value) — flags whose presence (and value, where
-# applicable) on the original argv must survive a self-relaunch.
-_CRITICAL_FLAGS: list[tuple[str, bool]] = [
-    ("--tui", False),
-    ("--dev", False),
+# argparse `dest` names whose flags should survive a self-relaunch. The
+# corresponding option strings + value semantics are derived from the actual
+# parser via introspection — see _build_critical_flag_table().
+_CRITICAL_DESTS = frozenset(
+    {
+        "tui",
+        "tui_dev",
+        "model",
+        "provider",
+        "yolo",
+        "ignore_user_config",
+        "ignore_rules",
+        "pass_session_id",
+        "accept_hooks",
+        "worktree",
+        "skills",
+        "quiet",
+        "verbose",
+        "source",
+    }
+)
+
+# --profile / -p is pre-parsed in main._apply_profile_override BEFORE argparse
+# runs (it sets HERMES_HOME and strips itself from sys.argv), so it isn't
+# declared on the parser. We add it explicitly below.
+_PRE_ARGPARSE_FLAGS: list[tuple[str, bool]] = [
     ("--profile", True),
     ("-p", True),
-    ("--model", True),
-    ("-m", True),
-    ("--provider", True),
-    ("--yolo", False),
-    ("--ignore-user-config", False),
-    ("--ignore-rules", False),
-    ("--pass-session-id", False),
-    ("--accept-hooks", False),
-    ("--worktree", False),
-    ("-w", False),
-    ("--skills", True),
-    ("-s", True),
-    ("--quiet", False),
-    ("-Q", False),
-    ("--verbose", False),
-    ("-v", False),
-    ("--source", True),
 ]
+
+
+def _build_critical_flag_table() -> list[tuple[str, bool]]:
+    """Build the (option_string, takes_value) table by introspecting the
+    real parser used by ``hermes`` itself."""
+    parser, _subparsers, chat_parser = build_top_level_parser()
+
+    table: list[tuple[str, bool]] = []
+    seen: set[tuple[str, bool]] = set()
+    for p in (parser, chat_parser):
+        for action in p._actions:
+            if not action.option_strings:
+                continue  # positional / no flag form
+            if action.dest not in _CRITICAL_DESTS:
+                continue
+            takes_value = action.nargs != 0  # store_true/false set nargs=0
+            for opt in action.option_strings:
+                key = (opt, takes_value)
+                if key not in seen:
+                    seen.add(key)
+                    table.append(key)
+
+    table.extend(_PRE_ARGPARSE_FLAGS)
+    return table
+
+
+_CRITICAL_FLAGS_TABLE = _build_critical_flag_table()
 
 
 def _extract_critical_flags(argv: Sequence[str]) -> list[str]:
@@ -49,14 +82,14 @@ def _extract_critical_flags(argv: Sequence[str]) -> list[str]:
         arg = argv[i]
         if "=" in arg:
             key = arg.split("=", 1)[0]
-            for flag, _ in _CRITICAL_FLAGS:
+            for flag, _ in _CRITICAL_FLAGS_TABLE:
                 if key == flag:
                     flags.append(arg)
                     break
             i += 1
             continue
 
-        for flag, takes_value in _CRITICAL_FLAGS:
+        for flag, takes_value in _CRITICAL_FLAGS_TABLE:
             if arg == flag:
                 flags.append(arg)
                 if takes_value and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
